@@ -29,10 +29,11 @@ class Music():
 class MusicPlayer():
     active_song = None
     song_queue = queue.Queue()
+    discord_client = None
     voice_client = None
     is_playing = False
 
-    def checkStatusEverySixtySeconds(self, f_stop):
+    def checkStatusEveryFiveSeconds(self, f_stop):
         if not self.voice_client == None:
             print(f'is_playing(): {self.voice_client.is_playing()}')
             if not self.voice_client.is_playing():
@@ -47,11 +48,12 @@ class MusicPlayer():
             self.active_song = None
 
         if not f_stop.is_set():
-            threading.Timer(5, self.checkStatusEverySixtySeconds, [f_stop]).start()
+            threading.Timer(5, self.checkStatusEveryFiveSeconds, [f_stop]).start()
 
-    def __init__(self):
+    def __init__(self, discord_client):
+        self.discord_client = discord_client
         f_stop = threading.Event()
-        self.checkStatusEverySixtySeconds(f_stop)
+        self.checkStatusEveryFiveSeconds(f_stop)
         print(f'Music Player has been initialized')
 
     async def createVoiceConnection(self, voice_channel):
@@ -62,13 +64,13 @@ class MusicPlayer():
         await message.channel.send(f'Disconnected!')
 
     async def addToQueue(self, message, link, requester):
+        if self.voice_client is None or not self.voice_client.is_connected():
+            await message.channel.send(f'Please add me to a voice channel first~!')
+            return
+
         song = Music(uuid.uuid4(), "Placeholder", link, requester)
         self.song_queue.put(song)
-        await message.channel.send(f'[DEBUG] Added <<Placeholder>> to the queue')
-
-        if not self.is_playing:
-            await message.channel.send(f'[DEBUG] Playing <<Placeholder>> from the queue')
-            await self.play(message)
+        await message.channel.send(f'[DEBUG] Added `{link}` ')
 
     def get_song(self):
         song = self.song_queue.get()
@@ -90,6 +92,7 @@ class MusicPlayer():
 
         # If not, check if you url is an mp3 and download it
         elif "mp3" in song.link:
+            print(f'Downling {song.uuid}')
             downloaded = requests.get(song.link)
             with open(f'{song.uuid}.mp3', 'wb') as f:
                 f.write(downloaded.content)  
@@ -97,7 +100,7 @@ class MusicPlayer():
         else:
             raise ValueError(f'{song.link} does not appear to be a valid song link.')
 
-        song
+        return song
 
     async def play(self, message):
         if not self.voice_client.is_connected():
@@ -154,10 +157,15 @@ class MusicPlayer():
 
 class CommandProcessor():
     # Initialize the music player and begin polling every 60 seconds
-    music_player = MusicPlayer()
+    discord_client = None
+    music_player = None
     voice_connection = None
 
-    async def processor(self, client, message):
+    def __init__(self, discord_client):
+        self.discord_client = discord_client
+        self.music_player = MusicPlayer(discord_client)
+
+    async def processor(self, message):
         message_text = message.content.split()
 
         command = message_text[0]
@@ -200,10 +208,12 @@ class CommandProcessor():
     async def com_add(self, message, arguments):
         await self.music_player.addToQueue(message, arguments[0], message.author.nick)
 
-commandProcessor = CommandProcessor()
-
 class CustomClient(discord.Client):
+    commandProcessor = None
+
     async def on_ready(self):
+        self.commandProcessor = CommandProcessor(self)
+        print(f'Initialized Custom Discord Client')
         for guild in client.guilds:
             print(f'{client.user} is in guild: {guild}')
 
@@ -214,7 +224,7 @@ class CustomClient(discord.Client):
             return
 
         if message.content.startswith("`"):
-            await commandProcessor.processor(self, message)
+            await self.commandProcessor.processor(message)
 
 client = CustomClient()
 client.run(TOKEN)
